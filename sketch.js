@@ -18,6 +18,16 @@ let levelName = "Level 1";
 let levelHint = "";
 let sensoryGainMultiplier = 1.0;
 
+let collectibles = [];
+let collectedCount = 0;
+let totalCollectibles = 0;
+let activeCollectible = 0;
+let collectibleColors = [
+  [255, 80, 80], // red
+  [80, 180, 255], // blue
+  [180, 80, 255], // purple
+];
+
 // ---------- SETUP ----------
 function setup() {
   createCanvas(windowWidth, windowHeight);
@@ -39,10 +49,12 @@ function draw() {
   updateMovingNoise(); // Level 3 (safe no-op otherwise)
   updatePlayer();
   updateSensory();
+  checkCollectibles();
 
   drawWalls();
   drawQuietZones();
   drawNoiseSources();
+  drawCollectibles();
   drawExit();
   drawHiddenPatternLayer(); // focus breadcrumbs
   drawPlayer();
@@ -61,6 +73,7 @@ function loadLevel(idx) {
   noiseSources = [];
   quietZones = [];
   walls = [];
+  activeCollectible = 0;
 
   if (levelIndex === 0) {
     levelName = "Level 1";
@@ -101,13 +114,18 @@ function loadLevel(idx) {
     ];
 
     quietZones = [
-      { x: 80, y: height - 120, w: 160, h: 120, drain: 0.75 },
-      { x: width - 220, y: 80, w: 180, h: 120, drain: 0.75 },
+      { x: 80, y: height - 120, w: 160, h: 120, drain: 2.5 },
+      { x: width - 220, y: 80, w: 180, h: 120, drain: 2.5 },
+    ];
+
+    totalCollectibles = 1;
+    collectedCount = 0;
+    collectibles = [
+      { x: width * 0.5, y: height * 0.5, r: 12, collected: false },
     ];
   }
 
   if (levelIndex === 1) {
-    // ✅ Level 2 (restored / preserved)
     levelName = "Level 2";
     levelHint =
       "More stimulation, fewer quiet zones. Plan routes + use Focus carefully.";
@@ -155,7 +173,14 @@ function loadLevel(idx) {
     ];
 
     quietZones = [
-      { x: width * 0.05, y: height * 0.6, w: 150, h: 110, drain: 0.7 },
+      { x: width * 0.05, y: height * 0.6, w: 150, h: 110, drain: 2.5 },
+    ];
+
+    totalCollectibles = 2;
+    collectedCount = 0;
+    collectibles = [
+      { x: width * 0.3, y: height * 0.5, r: 12, collected: false },
+      { x: width * 0.65, y: height * 0.25, r: 12, collected: false },
     ];
   }
 
@@ -197,13 +222,24 @@ function loadLevel(idx) {
       },
     ];
 
-    quietZones = [{ x: 60, y: 70, w: 150, h: 110, drain: 0.7 }];
+    quietZones = [
+      { x: 60, y: 70, w: 150, h: 110, drain: 2.5 },
+      { x: width * 0.88, y: height * 0.35, w: 130, h: 110, drain: 2.5 },
+    ];
 
     walls = [
       { x: width * 0.34, y: height * 0.2, w: width * 0.2, h: height * 0.55 },
       { x: width * 0.18, y: height * 0.15, w: width * 0.06, h: height * 0.7 },
       { x: width * 0.24, y: height * 0.78, w: width * 0.6, h: height * 0.07 },
       { x: width * 0.8, y: height * 0.05, w: width * 0.06, h: height * 0.62 },
+    ];
+
+    totalCollectibles = 3;
+    collectedCount = 0;
+    collectibles = [
+      { x: width * 0.1, y: height * 0.4, r: 12, collected: false },
+      { x: width * 0.6, y: height * 0.15, r: 12, collected: false },
+      { x: width * 0.91, y: height * 0.85, r: 12, collected: false },
     ];
   }
 
@@ -274,17 +310,20 @@ function updateMovingNoise() {
 
 // ---------- SENSORY SYSTEM ----------
 function updateSensory() {
-  let added = 0;
+  // Passive constant increase — always ticking up
+  let passiveRate = 0.12 * sensoryGainMultiplier;
 
+  // Extra increase near noise sources
+  let noiseBoost = 0;
   for (let n of noiseSources) {
     let d = dist(player.x, player.y, n.x, n.y);
     if (d < n.r) {
       let t = 1 - d / n.r;
-      let focusCost = focusHeld ? 1.35 : 1.0;
-      added += t * n.strength * focusCost;
+      noiseBoost += t * n.strength * sensoryGainMultiplier;
     }
   }
 
+  // Quiet zones drain it
   let drained = 0;
   for (let q of quietZones) {
     if (
@@ -297,61 +336,139 @@ function updateSensory() {
     }
   }
 
-  sensory += added * sensoryGainMultiplier;
+  sensory += passiveRate + noiseBoost;
   sensory -= drained;
   sensory = constrain(sensory, 0, sensoryMax);
 
   if (sensory >= sensoryMax) {
-    sensory = 55;
+    sensory = 0;
+    collectedCount = 0;
+    activeCollectible = 0;
+    for (let c of collectibles) c.collected = false;
     resetPlayerToStart();
+  }
+}
+
+// ---------- COLLECTIBLES ----------
+function drawCollectibles() {
+  push();
+  for (let i = 0; i < collectibles.length; i++) {
+    let c = collectibles[i];
+    if (c.collected) continue;
+
+    let col = collectibleColors[i % collectibleColors.length];
+    let isNext = i === activeCollectible;
+
+    // Glow — brighter if it's the next one to collect
+    noStroke();
+    fill(col[0], col[1], col[2], isNext ? 60 : 20);
+    circle(c.x, c.y, c.r * 5);
+
+    // Coin
+    fill(col[0], col[1], col[2], isNext ? 255 : 100);
+    stroke(col[0] * 0.7, col[1] * 0.7, col[2] * 0.7);
+    strokeWeight(2);
+    circle(c.x, c.y, c.r * 2);
+  }
+  pop();
+}
+
+function checkCollectibles() {
+  if (activeCollectible >= collectibles.length) return;
+  let c = collectibles[activeCollectible];
+  if (dist(player.x, player.y, c.x, c.y) < player.r + c.r) {
+    c.collected = true;
+    collectedCount++;
+    activeCollectible++;
   }
 }
 
 // ---------- DRAWING ----------
 function drawMenu() {
   background(10);
-  fill(255);
   textAlign(CENTER, CENTER);
 
-  // Title
-  textSize(38);
-  text("Pattern Master vs Social Chaos", width / 2, height / 2 - 120);
+  // — Title —
+  fill(255);
+  textSize(56);
+  text("Sensory Journey", width / 2, height / 2 - 170);
 
-  // Short premise
-  textSize(16);
-  text(
-    "Navigate a stimulating environment by balancing Focus and Sensory Load.",
-    width / 2,
-    height / 2 - 75
-  );
-
-  // Controls / How to play
+  // — Subtitle / premise —
+  fill(180);
   textSize(15);
-  text("CONTROLS", width / 2, height / 2 - 30);
+  text(
+    "Navigate a world full of stimulation. Balance your sensory load to reach the exit.",
+    width / 2,
+    height / 2 - 115
+  );
+
+  // — Divider —
+  stroke(255, 40);
+  strokeWeight(1);
+  line(width / 2 - 220, height / 2 - 88, width / 2 + 220, height / 2 - 88);
+  noStroke();
+
+  // — How to Play header —
+  fill(255);
+  textSize(16);
+  text("HOW TO PLAY", width / 2, height / 2 - 62);
+
+  // — Instructions —
+  fill(200);
   textSize(14);
-  text("Move: WASD / Arrow Keys", width / 2, height / 2 - 5);
+  let lineH = 24;
+  let startY = height / 2 - 34;
+  text("Move with  WASD  or  Arrow Keys", width / 2, startY);
   text(
-    "Hold SHIFT: Focus Mode (reveals the guideline path)",
+    "Hold  SHIFT  to enter Focus Mode — reveals a guideline path",
     width / 2,
-    height / 2 + 18
-  );
-  text("Goal: Reach the green exit zone", width / 2, height / 2 + 41);
-  text(
-    "Tip: Use quiet zones (blue areas) to reduce sensory load",
-    width / 2,
-    height / 2 + 64
+    startY + lineH
   );
   text(
-    "If sensory load maxes out, you'll be returned to the start",
+    "Collect all  gold items  before the exit appears",
     width / 2,
-    height / 2 + 87
+    startY + lineH * 2
+  );
+  text(
+    "Reach the  green exit zone  to complete each level",
+    width / 2,
+    startY + lineH * 3
+  );
+  text(
+    "Your sensory load rises constantly — manage it or you'll restart",
+    width / 2,
+    startY + lineH * 4
+  );
+  text(
+    "Step into  blue quiet zones  to offload your sensory load",
+    width / 2,
+    startY + lineH * 5
   );
 
-  // Start prompt
+  // — Warning —
+  fill(255, 160, 100);
+  textSize(13);
+  text(
+    "⚠  If your sensory load maxes out, you will be sent back to the start.",
+    width / 2,
+    startY + lineH * 6 + 8
+  );
+
+  // — Divider —
+  stroke(255, 40);
+  line(
+    width / 2 - 220,
+    startY + lineH * 7 + 14,
+    width / 2 + 220,
+    startY + lineH * 7 + 14
+  );
+  noStroke();
+
+  // — Start prompt (subtle pulse) —
+  let pulse = map(sin(frameCount * 0.05), -1, 1, 160, 255);
+  fill(pulse);
   textSize(18);
-  text("Press ENTER to Start", width / 2, height / 2 + 140);
-
-  // No logic here on purpose — your existing keyPressed() already starts the game.
+  text("Press  ENTER  to Begin", width / 2, startY + lineH * 8 + 20);
 }
 
 function drawTransition() {
@@ -360,20 +477,65 @@ function drawTransition() {
   textAlign(CENTER, CENTER);
 
   textSize(38);
-  text(levelName, width / 2, height / 2 - 70);
+  text(levelName, width / 2, height / 2 - 100);
 
   textSize(16);
-  text(levelHint, width / 2, height / 2 - 25);
+  text(levelHint, width / 2, height / 2 - 55);
 
   textSize(14);
   text(
     "Controls: WASD/Arrows to move • Hold SHIFT to Focus • Reach the exit",
     width / 2,
-    height / 2 + 15
+    height / 2 - 20
   );
 
+  // Only show sequence if level has more than 1 collectible
+  if (totalCollectibles > 1) {
+    textSize(14);
+    fill(200);
+    text(
+      "Collect the items in this order — remember it!",
+      width / 2,
+      height / 2 + 20
+    );
+
+    let dotR = 18;
+    let spacing = 70;
+    let totalW = (totalCollectibles - 1) * spacing;
+    let startX = width / 2 - totalW / 2;
+    let dotY = height / 2 + 65;
+
+    for (let i = 0; i < totalCollectibles; i++) {
+      let col = collectibleColors[i];
+      let cx = startX + i * spacing;
+
+      // Glow
+      noStroke();
+      fill(col[0], col[1], col[2], 50);
+      circle(cx, dotY, dotR * 3.5);
+
+      // Coin
+      fill(col[0], col[1], col[2]);
+      stroke(col[0] * 0.7, col[1] * 0.7, col[2] * 0.7);
+      strokeWeight(2);
+      circle(cx, dotY, dotR * 2);
+
+      // Arrow between dots
+      if (i < totalCollectibles - 1) {
+        noStroke();
+        fill(255, 120);
+        textSize(20);
+        textAlign(CENTER, CENTER);
+        text("→", cx + spacing / 2, dotY);
+      }
+    }
+  }
+
+  noStroke();
+  fill(255);
   textSize(16);
-  text("Press ENTER to Play", width / 2, height / 2 + 70);
+  textAlign(CENTER, CENTER);
+  text("Press ENTER to Play", width / 2, height / 2 + 130);
 }
 
 function drawWin() {
@@ -404,6 +566,7 @@ function drawPlayer() {
 }
 
 function drawExit() {
+  if (collectedCount < totalCollectibles) return; // hidden until all collected
   push();
   noStroke();
   fill(80, 200, 120);
@@ -451,7 +614,6 @@ function drawQuietZones() {
   pop();
 }
 
-// ✅ FIX: Level 3 focus path now routes around walls
 function drawHiddenPatternLayer() {
   if (!focusHeld) return;
 
@@ -477,14 +639,13 @@ function drawHiddenPatternLayer() {
     ];
     drawBreadcrumbPath(pts, 16);
   } else {
-    // Corridor-safe route:
-    // start -> down left open lane -> across just above bottom wall -> up near right lane -> to exit
     let pts = [
       { x: 140, y: 140 },
-      { x: width * 0.1, y: height * 0.7 },
-      { x: width * 0.28, y: height * 0.74 },
-      { x: width * 0.7, y: height * 0.74 },
-      { x: width * 0.76, y: height * 0.3 },
+      { x: width * 0.1, y: height * 0.75 },
+      { x: width * 0.29, y: height * 0.75 },
+      { x: width * 0.66, y: height * 0.75 },
+      { x: width * 0.91, y: height * 0.75 },
+      { x: width * 0.91, y: height * 0.1 },
       { x: exitZone.x + exitZone.w / 2, y: exitZone.y + exitZone.h / 2 },
     ];
     drawBreadcrumbPath(pts, 16);
@@ -521,7 +682,7 @@ function drawUI() {
   fill(255);
   textSize(12);
   textAlign(LEFT, BOTTOM);
-  text("Sensory Load", x, y - 4);
+  text("Sensory Load — find quiet zones to offload!", x, y - 4);
 
   textAlign(LEFT, TOP);
   text(focusHeld ? "FOCUS: ON (SHIFT)" : "FOCUS: OFF (SHIFT)", x, y + 26);
@@ -529,7 +690,22 @@ function drawUI() {
   textAlign(LEFT, TOP);
   text(levelName, x, y + 46);
 
-  if (walls.length > 0) text("Navigate the corridors", x, y + 66);
+  // Collectible counter (gold coloured)
+  fill(255, 200, 0);
+  text(`Collected: ${collectedCount} / ${totalCollectibles}`, x, y + 66);
+
+  if (collectedCount < totalCollectibles) {
+    let nextCol =
+      collectibleColors[activeCollectible % collectibleColors.length];
+    fill(nextCol[0], nextCol[1], nextCol[2]);
+    text(`Collect item ${activeCollectible + 1} next!`, x, y + 86);
+  }
+
+  if (walls.length > 0) {
+    fill(255);
+    text("Navigate the corridors", x, y + 106);
+  }
+
   pop();
 }
 
@@ -545,6 +721,7 @@ function drawOverloadFeedback() {
 
 // ---------- WIN CHECK ----------
 function checkWin() {
+  if (collectedCount < totalCollectibles) return; // can't win yet
   if (
     player.x > exitZone.x &&
     player.x < exitZone.x + exitZone.w &&
@@ -557,7 +734,6 @@ function checkWin() {
 
 // ---------- EVENTS ----------
 function keyPressed() {
-  // ENTER handles state changes cleanly (no repeating)
   if (keyCode === ENTER) {
     if (state === "menu") {
       resetPlayerToStart();
@@ -582,7 +758,6 @@ function keyPressed() {
     }
   }
 
-  // R restarts
   if (key === "r" || key === "R") {
     if (state === "play") {
       sensory = 0;
